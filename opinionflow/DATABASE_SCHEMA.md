@@ -1,92 +1,172 @@
-# OpinionFlow - Database Schema Design
+# OpinionFlow - Database Schema
 
 ## Overview
-This document outlines the complete database schema for the OpinionFlow platform. The system uses PostgreSQL as the primary relational database for structured data and MongoDB for flexible, document-based storage of reviews and analytics.
+
+This document defines the relational database schema for OpinionFlow, optimized for dashboard requirements. The schema uses **PostgreSQL** as the primary database with JSONB fields for flexible data storage.
 
 ---
 
-## Database Technology Stack
+## Database Technology
 
-- **Primary Database**: PostgreSQL 14+
-- **Document Store**: MongoDB 6+
-- **Cache Layer**: Redis 7+
-- **Search Engine**: Elasticsearch 8+ (for full-text search)
+- **Primary Database:** PostgreSQL 15+
+- **Cache Layer:** Redis 7+
+- **Full-text Search:** Elasticsearch 8+ OR PostgreSQL full-text search
 
 ---
 
-## PostgreSQL Schema
+## Table Relationships Graph
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         CORE ENTITIES                               │
+└─────────────────────────────────────────────────────────────────────┘
+
+            ┌─────────────┐
+            │    USERS    │◄───────────────┐
+            │  (Central)  │                │
+            └──────┬──────┘                │
+                   │                       │
+        ┌──────────┼──────────┬───────────┼────────────┐
+        │          │          │           │            │
+        ▼          ▼          ▼           ▼            ▼
+  ┌─────────┐  ┌────────┐  ┌──────┐  ┌────────┐  ┌──────────┐
+  │ REVIEWS │  │ BLOGS  │  │OFFERS│  │CAMPAIGNS│ │INFLUENCER│
+  └────┬────┘  └───┬────┘  └──┬───┘  └───┬────┘  └────┬─────┘
+       │           │          │          │            │
+       │      ┌────┴──────────┴──────────┴─────┐      │
+       │      │                                 │      │
+       ▼      ▼                                 ▼      ▼
+  ┌─────────────┐                      ┌────────────────┐
+  │  PRODUCTS   │                      │  AD_CREATIVES  │
+  │  (Central)  │                      │                │
+  └──────┬──────┘                      └────────────────┘
+         │
+         │
+  ┌──────┴───────┐
+  │              │
+  ▼              ▼
+┌──────────┐  ┌────────────┐
+│CATEGORIES│  │  VENDORS   │
+└──────────┘  └────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                    SUPPORTING ENTITIES                              │
+└─────────────────────────────────────────────────────────────────────┘
+
+    USERS  ──────►  INVOICES  ──────►  PAYMENTS
+      │
+      └──────────►  SUPPORT_TICKETS  ──────►  MESSAGES
+      │
+      └──────────►  SESSIONS
+
+
+    CAMPAIGNS  ────►  AD_IMPRESSIONS  ────►  AD_CLICKS
+                             │
+                             └──────────────►  AD_ANALYTICS
+
+
+    PRODUCTS  ─────►  TRANSLATIONS
+    BLOGS     ─────►  TRANSLATIONS
+    OFFERS    ─────►  TRANSLATIONS
+
+```
+
+---
+
+## JSON-Based Schema Definitions
 
 ### 1. User Management
 
 #### users
-```sql
-CREATE TABLE users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    email VARCHAR(255) UNIQUE NOT NULL,
-    phone VARCHAR(20) UNIQUE,
-    password_hash VARCHAR(255) NOT NULL,
-    first_name VARCHAR(100),
-    last_name VARCHAR(100),
-    role ENUM('end_user', 'admin', 'super_admin', 'content_admin', 'sme', 'business', 'influencer', 'marketing', 'sales', 'finance', 'ict', 'blog_admin', 'blog_editor', 'support_agent', 'support_admin') NOT NULL,
-    status ENUM('active', 'inactive', 'suspended', 'pending') DEFAULT 'pending',
-    email_verified BOOLEAN DEFAULT FALSE,
-    phone_verified BOOLEAN DEFAULT FALSE,
-    preferred_language VARCHAR(10) DEFAULT 'en',
-    location_country VARCHAR(2),
-    location_city VARCHAR(100),
-    location_lat DECIMAL(10, 8),
-    location_lng DECIMAL(11, 8),
-    avatar_url TEXT,
-    kyc_verified BOOLEAN DEFAULT FALSE,
-    kyc_documents JSONB,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    last_login_at TIMESTAMP,
-    deleted_at TIMESTAMP
-);
-
-CREATE INDEX idx_users_email ON users(email);
-CREATE INDEX idx_users_role ON users(role);
-CREATE INDEX idx_users_status ON users(status);
-CREATE INDEX idx_users_location ON users(location_country, location_city);
-```
-
-#### user_preferences
-```sql
-CREATE TABLE user_preferences (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-    theme VARCHAR(20) DEFAULT 'light',
-    notifications_enabled BOOLEAN DEFAULT TRUE,
-    email_notifications BOOLEAN DEFAULT TRUE,
-    sms_notifications BOOLEAN DEFAULT FALSE,
-    favorite_categories JSONB,
-    blocked_users JSONB,
-    privacy_settings JSONB,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_user_preferences_user_id ON user_preferences(user_id);
+```json
+{
+  "table": "users",
+  "description": "Core user accounts for all roles",
+  "columns": {
+    "id": {"type": "UUID", "primary": true},
+    "email": {"type": "VARCHAR(255)", "unique": true, "required": true},
+    "phone": {"type": "VARCHAR(20)", "unique": true},
+    "password_hash": {"type": "VARCHAR(255)", "required": true},
+    "first_name": {"type": "VARCHAR(100)"},
+    "last_name": {"type": "VARCHAR(100)"},
+    "role": {
+      "type": "ENUM",
+      "values": ["end_user", "admin", "super_admin", "content_admin", "sme", "business", "influencer", "marketing", "sales", "finance", "ict"],
+      "required": true
+    },
+    "status": {
+      "type": "ENUM",
+      "values": ["active", "inactive", "suspended", "pending"],
+      "default": "pending"
+    },
+    "email_verified": {"type": "BOOLEAN", "default": false},
+    "phone_verified": {"type": "BOOLEAN", "default": false},
+    "preferred_language": {"type": "VARCHAR(10)", "default": "en"},
+    "location": {
+      "type": "JSONB",
+      "structure": {
+        "country": "VARCHAR(2)",
+        "city": "VARCHAR(100)",
+        "lat": "DECIMAL(10,8)",
+        "lng": "DECIMAL(11,8)"
+      }
+    },
+    "avatar_url": {"type": "TEXT"},
+    "kyc_verified": {"type": "BOOLEAN", "default": false},
+    "kyc_documents": {"type": "JSONB"},
+    "metadata": {
+      "type": "JSONB",
+      "description": "Additional flexible user data"
+    },
+    "created_at": {"type": "TIMESTAMP", "default": "CURRENT_TIMESTAMP"},
+    "updated_at": {"type": "TIMESTAMP", "default": "CURRENT_TIMESTAMP"},
+    "last_login_at": {"type": "TIMESTAMP"},
+    "deleted_at": {"type": "TIMESTAMP"}
+  },
+  "indexes": [
+    {"columns": ["email"], "type": "btree"},
+    {"columns": ["role"], "type": "btree"},
+    {"columns": ["status"], "type": "btree"},
+    {"columns": ["location"], "type": "gin"}
+  ],
+  "relationships": {
+    "has_many": ["sessions", "reviews", "blogs", "campaigns", "offers", "tickets"],
+    "has_one": ["preferences", "influencer_profile", "business_profile"]
+  }
+}
 ```
 
 #### user_sessions
-```sql
-CREATE TABLE user_sessions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-    token_hash VARCHAR(255) NOT NULL,
-    device_type VARCHAR(50),
-    browser VARCHAR(100),
-    ip_address INET,
-    user_agent TEXT,
-    expires_at TIMESTAMP NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_user_sessions_user_id ON user_sessions(user_id);
-CREATE INDEX idx_user_sessions_token_hash ON user_sessions(token_hash);
-CREATE INDEX idx_user_sessions_expires_at ON user_sessions(expires_at);
+```json
+{
+  "table": "user_sessions",
+  "description": "Active user sessions for authentication",
+  "columns": {
+    "id": {"type": "UUID", "primary": true},
+    "user_id": {"type": "UUID", "references": "users.id", "on_delete": "CASCADE"},
+    "token_hash": {"type": "VARCHAR(255)", "required": true},
+    "device_info": {
+      "type": "JSONB",
+      "structure": {
+        "device_type": "VARCHAR(50)",
+        "browser": "VARCHAR(100)",
+        "os": "VARCHAR(100)",
+        "ip_address": "INET",
+        "user_agent": "TEXT"
+      }
+    },
+    "expires_at": {"type": "TIMESTAMP", "required": true},
+    "created_at": {"type": "TIMESTAMP", "default": "CURRENT_TIMESTAMP"}
+  },
+  "indexes": [
+    {"columns": ["user_id"], "type": "btree"},
+    {"columns": ["token_hash"], "type": "btree"},
+    {"columns": ["expires_at"], "type": "btree"}
+  ],
+  "relationships": {
+    "belongs_to": "users"
+  }
+}
 ```
 
 ---
@@ -94,89 +174,109 @@ CREATE INDEX idx_user_sessions_expires_at ON user_sessions(expires_at);
 ### 2. Product Management
 
 #### products
-```sql
-CREATE TABLE products (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name VARCHAR(500) NOT NULL,
-    slug VARCHAR(600) UNIQUE NOT NULL,
-    brand VARCHAR(200),
-    category_id UUID REFERENCES categories(id),
-    subcategory_id UUID,
-    description TEXT,
-    specifications JSONB,
-    images JSONB,
-    official_website TEXT,
-    average_rating DECIMAL(3, 2) DEFAULT 0,
-    total_reviews INTEGER DEFAULT 0,
-    ccs_score DECIMAL(4, 2), -- Consumer Consensus Score
-    expectation_score DECIMAL(4, 2), -- Expectation Fulfillment Score
-    risk_index DECIMAL(4, 2), -- Risk Index
-    confidence_indicator DECIMAL(4, 2), -- Confidence Indicator
-    price_range JSONB, -- {min, max, currency}
-    availability_status VARCHAR(50),
-    meta_title VARCHAR(255),
-    meta_description TEXT,
-    meta_keywords TEXT,
-    structured_data JSONB, -- Schema.org markup
-    seo_score INTEGER,
-    status ENUM('draft', 'published', 'archived') DEFAULT 'draft',
-    view_count INTEGER DEFAULT 0,
-    created_by UUID REFERENCES users(id),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    published_at TIMESTAMP,
-    deleted_at TIMESTAMP
-);
-
-CREATE INDEX idx_products_slug ON products(slug);
-CREATE INDEX idx_products_category_id ON products(category_id);
-CREATE INDEX idx_products_brand ON products(brand);
-CREATE INDEX idx_products_status ON products(status);
-CREATE INDEX idx_products_ccs_score ON products(ccs_score DESC);
-CREATE INDEX idx_products_created_at ON products(created_at DESC);
+```json
+{
+  "table": "products",
+  "description": "Product catalog for reviews and content",
+  "columns": {
+    "id": {"type": "UUID", "primary": true},
+    "name": {"type": "VARCHAR(500)", "required": true},
+    "slug": {"type": "VARCHAR(600)", "unique": true, "required": true},
+    "category_id": {"type": "UUID", "references": "categories.id"},
+    "brand": {"type": "VARCHAR(200)"},
+    "sku": {"type": "VARCHAR(100)", "unique": true},
+    "description": {"type": "TEXT"},
+    "short_description": {"type": "VARCHAR(500)"},
+    "specifications": {
+      "type": "JSONB",
+      "description": "Product specs as key-value pairs"
+    },
+    "pricing": {
+      "type": "JSONB",
+      "structure": {
+        "mrp": "DECIMAL(12,2)",
+        "selling_price": "DECIMAL(12,2)",
+        "currency": "VARCHAR(3)"
+      }
+    },
+    "images": {
+      "type": "JSONB",
+      "description": "Array of image URLs"
+    },
+    "status": {
+      "type": "ENUM",
+      "values": ["draft", "pending", "approved", "rejected", "inactive"],
+      "default": "draft"
+    },
+    "seo_metadata": {
+      "type": "JSONB",
+      "structure": {
+        "meta_title": "VARCHAR(200)",
+        "meta_description": "VARCHAR(500)",
+        "keywords": "TEXT[]",
+        "og_image": "TEXT"
+      }
+    },
+    "rating_aggregate": {
+      "type": "JSONB",
+      "structure": {
+        "average_rating": "DECIMAL(3,2)",
+        "total_reviews": "INTEGER",
+        "rating_distribution": "JSONB"
+      }
+    },
+    "created_by": {"type": "UUID", "references": "users.id"},
+    "created_at": {"type": "TIMESTAMP", "default": "CURRENT_TIMESTAMP"},
+    "updated_at": {"type": "TIMESTAMP", "default": "CURRENT_TIMESTAMP"},
+    "published_at": {"type": "TIMESTAMP"}
+  },
+  "indexes": [
+    {"columns": ["slug"], "type": "btree"},
+    {"columns": ["category_id"], "type": "btree"},
+    {"columns": ["status"], "type": "btree"},
+    {"columns": ["brand"], "type": "btree"},
+    {"columns": ["name"], "type": "gin", "using": "gin_trgm_ops"}
+  ],
+  "relationships": {
+    "belongs_to": ["categories", "users"],
+    "has_many": ["reviews", "variants", "translations"]
+  }
+}
 ```
 
 #### categories
-```sql
-CREATE TABLE categories (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name VARCHAR(200) NOT NULL,
-    slug VARCHAR(250) UNIQUE NOT NULL,
-    parent_id UUID REFERENCES categories(id),
-    description TEXT,
-    icon_url TEXT,
-    image_url TEXT,
-    display_order INTEGER DEFAULT 0,
-    meta_title VARCHAR(255),
-    meta_description TEXT,
-    is_featured BOOLEAN DEFAULT FALSE,
-    status ENUM('active', 'inactive') DEFAULT 'active',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_categories_slug ON categories(slug);
-CREATE INDEX idx_categories_parent_id ON categories(parent_id);
-CREATE INDEX idx_categories_status ON categories(status);
-```
-
-#### product_variants
-```sql
-CREATE TABLE product_variants (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    product_id UUID REFERENCES products(id) ON DELETE CASCADE,
-    name VARCHAR(200),
-    sku VARCHAR(100) UNIQUE,
-    specifications JSONB,
-    price DECIMAL(12, 2),
-    currency VARCHAR(3) DEFAULT 'INR',
-    availability BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_product_variants_product_id ON product_variants(product_id);
-CREATE INDEX idx_product_variants_sku ON product_variants(sku);
+```json
+{
+  "table": "categories",
+  "description": "Product categories hierarchy",
+  "columns": {
+    "id": {"type": "UUID", "primary": true},
+    "name": {"type": "VARCHAR(200)", "required": true},
+    "slug": {"type": "VARCHAR(250)", "unique": true, "required": true},
+    "parent_id": {"type": "UUID", "references": "categories.id"},
+    "description": {"type": "TEXT"},
+    "icon_url": {"type": "TEXT"},
+    "image_url": {"type": "TEXT"},
+    "display_order": {"type": "INTEGER", "default": 0},
+    "status": {
+      "type": "ENUM",
+      "values": ["active", "inactive"],
+      "default": "active"
+    },
+    "seo_metadata": {"type": "JSONB"},
+    "created_at": {"type": "TIMESTAMP", "default": "CURRENT_TIMESTAMP"},
+    "updated_at": {"type": "TIMESTAMP", "default": "CURRENT_TIMESTAMP"}
+  },
+  "indexes": [
+    {"columns": ["slug"], "type": "btree"},
+    {"columns": ["parent_id"], "type": "btree"},
+    {"columns": ["status", "display_order"], "type": "btree"}
+  ],
+  "relationships": {
+    "belongs_to": "categories (self-reference for parent)",
+    "has_many": ["products", "subcategories (self-reference)"]
+  }
+}
 ```
 
 ---
@@ -184,1082 +284,680 @@ CREATE INDEX idx_product_variants_sku ON product_variants(sku);
 ### 3. Review System
 
 #### reviews
-```sql
-CREATE TABLE reviews (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    product_id UUID REFERENCES products(id) ON DELETE CASCADE,
-    source_type ENUM('youtube', 'tiktok', 'ecommerce', 'forum', 'blog', 'user_submission') NOT NULL,
-    source_id VARCHAR(255), -- External source identifier
-    source_url TEXT,
-    author_name VARCHAR(200),
-    author_id UUID REFERENCES users(id), -- If user submission
-    influencer_id UUID REFERENCES influencers(id), -- If from influencer
-    title VARCHAR(500),
-    content TEXT,
-    rating DECIMAL(3, 2),
-    sentiment VARCHAR(20), -- positive, neutral, negative
-    credibility_score DECIMAL(4, 2),
-    view_count INTEGER DEFAULT 0,
-    helpful_count INTEGER DEFAULT 0,
-    not_helpful_count INTEGER DEFAULT 0,
-    media_urls JSONB, -- Images/Videos
-    language VARCHAR(10) DEFAULT 'en',
-    status ENUM('pending', 'approved', 'rejected', 'flagged') DEFAULT 'pending',
-    reviewed_by UUID REFERENCES users(id), -- SME who reviewed
-    reviewed_at TIMESTAMP,
-    published_at TIMESTAMP,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    deleted_at TIMESTAMP
-);
-
-CREATE INDEX idx_reviews_product_id ON reviews(product_id);
-CREATE INDEX idx_reviews_source_type ON reviews(source_type);
-CREATE INDEX idx_reviews_status ON reviews(status);
-CREATE INDEX idx_reviews_sentiment ON reviews(sentiment);
-CREATE INDEX idx_reviews_created_at ON reviews(created_at DESC);
-```
-
-#### review_analysis
-```sql
-CREATE TABLE review_analysis (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    review_id UUID REFERENCES reviews(id) ON DELETE CASCADE,
-    overall_sentiment VARCHAR(20),
-    pros JSONB, -- Array of strings
-    cons JSONB, -- Array of strings
-    timestamps JSONB, -- For video reviews
-    keywords JSONB, -- Extracted keywords
-    promised_vs_reality TEXT, -- Discrepancy analysis
-    ai_confidence DECIMAL(4, 2),
-    sme_validated BOOLEAN DEFAULT FALSE,
-    sme_notes TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_review_analysis_review_id ON review_analysis(review_id);
-```
-
-#### review_votes
-```sql
-CREATE TABLE review_votes (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    review_id UUID REFERENCES reviews(id) ON DELETE CASCADE,
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-    vote_type ENUM('helpful', 'not_helpful', 'inappropriate') NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(review_id, user_id, vote_type)
-);
-
-CREATE INDEX idx_review_votes_review_id ON review_votes(review_id);
-CREATE INDEX idx_review_votes_user_id ON review_votes(user_id);
+```json
+{
+  "table": "reviews",
+  "description": "Product reviews and ratings",
+  "columns": {
+    "id": {"type": "UUID", "primary": true},
+    "product_id": {"type": "UUID", "references": "products.id", "required": true},
+    "user_id": {"type": "UUID", "references": "users.id"},
+    "reviewer_name": {"type": "VARCHAR(200)"},
+    "rating": {
+      "type": "JSONB",
+      "structure": {
+        "overall": "DECIMAL(2,1)",
+        "quality": "DECIMAL(2,1)",
+        "value": "DECIMAL(2,1)",
+        "features": "DECIMAL(2,1)",
+        "design": "DECIMAL(2,1)"
+      },
+      "required": true
+    },
+    "title": {"type": "VARCHAR(300)"},
+    "content": {"type": "TEXT", "required": true},
+    "pros": {"type": "JSONB", "description": "Array of pros"},
+    "cons": {"type": "JSONB", "description": "Array of cons"},
+    "verified_purchase": {"type": "BOOLEAN", "default": false},
+    "ai_summary": {"type": "TEXT"},
+    "quality_score": {"type": "DECIMAL(3,2)"},
+    "status": {
+      "type": "ENUM",
+      "values": ["pending", "approved", "rejected", "flagged"],
+      "default": "pending"
+    },
+    "moderation_notes": {"type": "TEXT"},
+    "helpful_count": {"type": "INTEGER", "default": 0},
+    "unhelpful_count": {"type": "INTEGER", "default": 0},
+    "created_at": {"type": "TIMESTAMP", "default": "CURRENT_TIMESTAMP"},
+    "updated_at": {"type": "TIMESTAMP", "default": "CURRENT_TIMESTAMP"},
+    "published_at": {"type": "TIMESTAMP"}
+  },
+  "indexes": [
+    {"columns": ["product_id"], "type": "btree"},
+    {"columns": ["user_id"], "type": "btree"},
+    {"columns": ["status"], "type": "btree"},
+    {"columns": ["created_at"], "type": "btree"},
+    {"columns": ["content"], "type": "gin", "using": "gin_trgm_ops"}
+  ],
+  "relationships": {
+    "belongs_to": ["products", "users"],
+    "has_many": ["votes"]
+  }
+}
 ```
 
 ---
 
-### 4. Influencer Management
-
-#### influencers
-```sql
-CREATE TABLE influencers (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-    display_name VARCHAR(200) NOT NULL,
-    slug VARCHAR(250) UNIQUE NOT NULL,
-    bio TEXT,
-    avatar_url TEXT,
-    banner_url TEXT,
-    specialization JSONB, -- Array of categories
-    total_followers INTEGER DEFAULT 0,
-    total_reviews INTEGER DEFAULT 0,
-    average_rating DECIMAL(3, 2) DEFAULT 0,
-    verification_status ENUM('pending', 'verified', 'rejected') DEFAULT 'pending',
-    verification_badge BOOLEAN DEFAULT FALSE,
-    social_media_links JSONB,
-    website_url TEXT,
-    contact_email VARCHAR(255),
-    status ENUM('active', 'inactive', 'suspended') DEFAULT 'active',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_influencers_user_id ON influencers(user_id);
-CREATE INDEX idx_influencers_slug ON influencers(slug);
-CREATE INDEX idx_influencers_verification_status ON influencers(verification_status);
-```
-
-#### influencer_platforms
-```sql
-CREATE TABLE influencer_platforms (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    influencer_id UUID REFERENCES influencers(id) ON DELETE CASCADE,
-    platform VARCHAR(50) NOT NULL, -- youtube, facebook, instagram, reddit, quora, blog
-    platform_username VARCHAR(200),
-    platform_url TEXT,
-    follower_count INTEGER DEFAULT 0,
-    is_primary BOOLEAN DEFAULT FALSE,
-    last_synced_at TIMESTAMP,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_influencer_platforms_influencer_id ON influencer_platforms(influencer_id);
-CREATE INDEX idx_influencer_platforms_platform ON influencer_platforms(platform);
-```
-
-#### influencer_analytics
-```sql
-CREATE TABLE influencer_analytics (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    influencer_id UUID REFERENCES influencers(id) ON DELETE CASCADE,
-    date DATE NOT NULL,
-    views INTEGER DEFAULT 0,
-    engagement INTEGER DEFAULT 0,
-    new_followers INTEGER DEFAULT 0,
-    total_followers INTEGER DEFAULT 0,
-    reviews_published INTEGER DEFAULT 0,
-    average_rating DECIMAL(3, 2),
-    revenue DECIMAL(12, 2) DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(influencer_id, date)
-);
-
-CREATE INDEX idx_influencer_analytics_influencer_id ON influencer_analytics(influencer_id);
-CREATE INDEX idx_influencer_analytics_date ON influencer_analytics(date DESC);
-```
-
----
-
-### 5. Advertising System
+### 4. Advertising System
 
 #### ad_campaigns
-```sql
-CREATE TABLE ad_campaigns (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    business_user_id UUID REFERENCES business_users(id) ON DELETE CASCADE,
-    name VARCHAR(300) NOT NULL,
-    description TEXT,
-    campaign_type ENUM('retail', 'corporate') DEFAULT 'retail',
-    status ENUM('draft', 'pending_approval', 'approved', 'active', 'paused', 'completed', 'rejected') DEFAULT 'draft',
-    budget DECIMAL(12, 2),
-    spent DECIMAL(12, 2) DEFAULT 0,
-    currency VARCHAR(3) DEFAULT 'INR',
-    pricing_model ENUM('cpm', 'cpc', 'flat_fee') NOT NULL,
-    cpm_rate DECIMAL(10, 2),
-    cpc_rate DECIMAL(10, 2),
-    flat_fee DECIMAL(12, 2),
-    daily_budget DECIMAL(12, 2),
-    targeting JSONB, -- Demographics, location, category, device
-    ad_locations JSONB, -- Array of locations
-    start_date DATE,
-    end_date DATE,
-    impressions_quota INTEGER,
-    impressions_served INTEGER DEFAULT 0,
-    clicks_quota INTEGER,
-    clicks_served INTEGER DEFAULT 0,
-    priority INTEGER DEFAULT 0,
-    submitted_by UUID REFERENCES users(id),
-    approved_by UUID REFERENCES users(id),
-    approved_at TIMESTAMP,
-    rejection_reason TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_ad_campaigns_business_user_id ON ad_campaigns(business_user_id);
-CREATE INDEX idx_ad_campaigns_status ON ad_campaigns(status);
-CREATE INDEX idx_ad_campaigns_start_date ON ad_campaigns(start_date);
-CREATE INDEX idx_ad_campaigns_end_date ON ad_campaigns(end_date);
-```
-
-#### ad_creatives
-```sql
-CREATE TABLE ad_creatives (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    campaign_id UUID REFERENCES ad_campaigns(id) ON DELETE CASCADE,
-    name VARCHAR(300),
-    type ENUM('banner', 'video', 'native', 'sponsored_content') NOT NULL,
-    format VARCHAR(50), -- 300x250, 728x90, etc.
-    headline VARCHAR(300),
-    description TEXT,
-    cta_text VARCHAR(100),
-    cta_url TEXT NOT NULL,
-    image_url TEXT,
-    video_url TEXT,
-    html_content TEXT,
-    status ENUM('active', 'inactive', 'rejected') DEFAULT 'active',
-    click_count INTEGER DEFAULT 0,
-    impression_count INTEGER DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_ad_creatives_campaign_id ON ad_creatives(campaign_id);
-CREATE INDEX idx_ad_creatives_status ON ad_creatives(status);
+```json
+{
+  "table": "ad_campaigns",
+  "description": "Advertising campaigns",
+  "columns": {
+    "id": {"type": "UUID", "primary": true},
+    "business_user_id": {"type": "UUID", "references": "users.id", "required": true},
+    "name": {"type": "VARCHAR(300)", "required": true},
+    "description": {"type": "TEXT"},
+    "campaign_type": {
+      "type": "ENUM",
+      "values": ["banner", "sponsored_content", "video", "native"],
+      "required": true
+    },
+    "status": {
+      "type": "ENUM",
+      "values": ["draft", "pending_approval", "active", "paused", "completed", "rejected"],
+      "default": "draft"
+    },
+    "targeting": {
+      "type": "JSONB",
+      "structure": {
+        "countries": "TEXT[]",
+        "cities": "TEXT[]",
+        "age_range": {"min": "INTEGER", "max": "INTEGER"},
+        "gender": "VARCHAR(20)",
+        "interests": "TEXT[]",
+        "product_categories": "TEXT[]",
+        "page_types": "TEXT[]",
+        "devices": "TEXT[]",
+        "days_of_week": "INTEGER[]",
+        "hours_of_day": "INTEGER[]"
+      }
+    },
+    "budget": {
+      "type": "JSONB",
+      "structure": {
+        "total": "DECIMAL(12,2)",
+        "daily": "DECIMAL(12,2)",
+        "currency": "VARCHAR(3)"
+      },
+      "required": true
+    },
+    "pricing_model": {
+      "type": "ENUM",
+      "values": ["CPM", "CPC", "FLAT"],
+      "required": true
+    },
+    "pricing_rate": {"type": "DECIMAL(10,2)"},
+    "impressions_quota": {"type": "INTEGER"},
+    "clicks_quota": {"type": "INTEGER"},
+    "start_date": {"type": "DATE", "required": true},
+    "end_date": {"type": "DATE", "required": true},
+    "priority": {"type": "INTEGER", "default": 5},
+    "stats": {
+      "type": "JSONB",
+      "structure": {
+        "impressions": "INTEGER",
+        "clicks": "INTEGER",
+        "spent": "DECIMAL(12,2)",
+        "conversions": "INTEGER"
+      },
+      "default": "{'impressions': 0, 'clicks': 0, 'spent': 0, 'conversions': 0}"
+    },
+    "created_at": {"type": "TIMESTAMP", "default": "CURRENT_TIMESTAMP"},
+    "updated_at": {"type": "TIMESTAMP", "default": "CURRENT_TIMESTAMP"},
+    "approved_at": {"type": "TIMESTAMP"},
+    "approved_by": {"type": "UUID", "references": "users.id"}
+  },
+  "indexes": [
+    {"columns": ["business_user_id"], "type": "btree"},
+    {"columns": ["status", "start_date", "end_date"], "type": "btree"},
+    {"columns": ["targeting"], "type": "gin"}
+  ],
+  "relationships": {
+    "belongs_to": "users (business_user_id)",
+    "has_many": ["ad_creatives", "ad_impressions", "ad_clicks"]
+  }
+}
 ```
 
 #### ad_impressions
-```sql
-CREATE TABLE ad_impressions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    campaign_id UUID REFERENCES ad_campaigns(id) ON DELETE CASCADE,
-    creative_id UUID REFERENCES ad_creatives(id) ON DELETE CASCADE,
-    user_id UUID REFERENCES users(id),
-    session_id UUID,
-    page_url TEXT,
-    page_type VARCHAR(50),
-    device_type VARCHAR(50),
-    browser VARCHAR(100),
-    os VARCHAR(100),
-    ip_address INET,
-    location_country VARCHAR(2),
-    location_city VARCHAR(100),
-    referrer TEXT,
-    impression_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    viewable BOOLEAN DEFAULT TRUE,
-    view_duration INTEGER -- seconds
-);
-
-CREATE INDEX idx_ad_impressions_campaign_id ON ad_impressions(campaign_id);
-CREATE INDEX idx_ad_impressions_creative_id ON ad_impressions(creative_id);
-CREATE INDEX idx_ad_impressions_impression_time ON ad_impressions(impression_time DESC);
-CREATE INDEX idx_ad_impressions_location ON ad_impressions(location_country, location_city);
+```json
+{
+  "table": "ad_impressions",
+  "description": "Track ad impressions for billing and analytics",
+  "columns": {
+    "id": {"type": "UUID", "primary": true},
+    "campaign_id": {"type": "UUID", "references": "ad_campaigns.id", "required": true},
+    "creative_id": {"type": "UUID", "references": "ad_creatives.id"},
+    "user_id": {"type": "UUID", "references": "users.id"},
+    "session_id": {"type": "VARCHAR(100)"},
+    "page_url": {"type": "TEXT"},
+    "page_type": {"type": "VARCHAR(100)"},
+    "device_type": {"type": "VARCHAR(50)"},
+    "location": {
+      "type": "JSONB",
+      "structure": {
+        "country": "VARCHAR(2)",
+        "city": "VARCHAR(100)"
+      }
+    },
+    "viewable": {"type": "BOOLEAN", "default": false},
+    "view_duration": {"type": "INTEGER"},
+    "impression_time": {"type": "TIMESTAMP", "default": "CURRENT_TIMESTAMP", "required": true}
+  },
+  "indexes": [
+    {"columns": ["campaign_id", "impression_time"], "type": "btree"},
+    {"columns": ["session_id", "creative_id"], "type": "btree"},
+    {"columns": ["impression_time"], "type": "brin"}
+  ],
+  "relationships": {
+    "belongs_to": ["ad_campaigns", "ad_creatives", "users"]
+  }
+}
 ```
 
 #### ad_clicks
-```sql
-CREATE TABLE ad_clicks (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    campaign_id UUID REFERENCES ad_campaigns(id) ON DELETE CASCADE,
-    creative_id UUID REFERENCES ad_creatives(id) ON DELETE CASCADE,
-    impression_id UUID REFERENCES ad_impressions(id),
-    user_id UUID REFERENCES users(id),
-    session_id UUID,
-    click_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    ip_address INET,
-    device_type VARCHAR(50),
-    converted BOOLEAN DEFAULT FALSE
-);
-
-CREATE INDEX idx_ad_clicks_campaign_id ON ad_clicks(campaign_id);
-CREATE INDEX idx_ad_clicks_creative_id ON ad_clicks(creative_id);
-CREATE INDEX idx_ad_clicks_click_time ON ad_clicks(click_time DESC);
-```
-
-#### ad_analytics_daily
-```sql
-CREATE TABLE ad_analytics_daily (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    campaign_id UUID REFERENCES ad_campaigns(id) ON DELETE CASCADE,
-    date DATE NOT NULL,
-    impressions INTEGER DEFAULT 0,
-    clicks INTEGER DEFAULT 0,
-    spend DECIMAL(12, 2) DEFAULT 0,
-    ctr DECIMAL(5, 4), -- Click-through rate
-    cpc DECIMAL(10, 2), -- Cost per click
-    cpm DECIMAL(10, 2), -- Cost per mille
-    conversions INTEGER DEFAULT 0,
-    revenue DECIMAL(12, 2) DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(campaign_id, date)
-);
-
-CREATE INDEX idx_ad_analytics_daily_campaign_id ON ad_analytics_daily(campaign_id);
-CREATE INDEX idx_ad_analytics_daily_date ON ad_analytics_daily(date DESC);
+```json
+{
+  "table": "ad_clicks",
+  "description": "Track ad clicks for billing and analytics",
+  "columns": {
+    "id": {"type": "UUID", "primary": true},
+    "campaign_id": {"type": "UUID", "references": "ad_campaigns.id", "required": true},
+    "creative_id": {"type": "UUID", "references": "ad_creatives.id"},
+    "impression_id": {"type": "UUID", "references": "ad_impressions.id"},
+    "user_id": {"type": "UUID", "references": "users.id"},
+    "session_id": {"type": "VARCHAR(100)"},
+    "ip_address": {"type": "INET"},
+    "device_type": {"type": "VARCHAR(50)"},
+    "click_time": {"type": "TIMESTAMP", "default": "CURRENT_TIMESTAMP", "required": true},
+    "cost": {"type": "DECIMAL(10,4)"}
+  },
+  "indexes": [
+    {"columns": ["campaign_id", "click_time"], "type": "btree"},
+    {"columns": ["impression_id"], "type": "btree"}
+  ],
+  "relationships": {
+    "belongs_to": ["ad_campaigns", "ad_creatives", "ad_impressions", "users"]
+  }
+}
 ```
 
 ---
 
-### 6. Business User & Offers
-
-#### business_users
-```sql
-CREATE TABLE business_users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-    business_type ENUM('retail', 'corporate') NOT NULL,
-    company_name VARCHAR(300) NOT NULL,
-    business_registration_number VARCHAR(100),
-    gst_number VARCHAR(20),
-    pan_number VARCHAR(20),
-    address TEXT,
-    city VARCHAR(100),
-    state VARCHAR(100),
-    country VARCHAR(2),
-    postal_code VARCHAR(20),
-    contact_person VARCHAR(200),
-    contact_email VARCHAR(255),
-    contact_phone VARCHAR(20),
-    website_url TEXT,
-    industry VARCHAR(100),
-    company_size VARCHAR(50),
-    verification_status ENUM('pending', 'verified', 'rejected') DEFAULT 'pending',
-    verification_documents JSONB,
-    subscription_plan_id UUID REFERENCES subscription_plans(id),
-    subscription_start_date DATE,
-    subscription_end_date DATE,
-    subscription_status ENUM('active', 'expired', 'cancelled') DEFAULT 'active',
-    assigned_sales_rep UUID REFERENCES users(id), -- For corporate
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_business_users_user_id ON business_users(user_id);
-CREATE INDEX idx_business_users_business_type ON business_users(business_type);
-CREATE INDEX idx_business_users_verification_status ON business_users(verification_status);
-CREATE INDEX idx_business_users_subscription_plan_id ON business_users(subscription_plan_id);
-```
-
-#### subscription_plans
-```sql
-CREATE TABLE subscription_plans (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name VARCHAR(100) NOT NULL,
-    slug VARCHAR(120) UNIQUE NOT NULL,
-    description TEXT,
-    plan_type ENUM('basic', 'pro', 'enterprise') NOT NULL,
-    price DECIMAL(12, 2) NOT NULL,
-    currency VARCHAR(3) DEFAULT 'INR',
-    billing_cycle ENUM('monthly', 'quarterly', 'yearly') NOT NULL,
-    features JSONB, -- Array of features
-    ad_credits INTEGER DEFAULT 0,
-    offer_slots INTEGER DEFAULT 0,
-    vendor_listings INTEGER DEFAULT 0,
-    priority_support BOOLEAN DEFAULT FALSE,
-    analytics_access BOOLEAN DEFAULT TRUE,
-    api_access BOOLEAN DEFAULT FALSE,
-    is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_subscription_plans_slug ON subscription_plans(slug);
-CREATE INDEX idx_subscription_plans_plan_type ON subscription_plans(plan_type);
-```
+### 5. Offers Management
 
 #### offers
-```sql
-CREATE TABLE offers (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    business_user_id UUID REFERENCES business_users(id) ON DELETE CASCADE,
-    title VARCHAR(500) NOT NULL,
-    slug VARCHAR(600) UNIQUE NOT NULL,
-    description TEXT,
-    offer_type ENUM('discount', 'coupon', 'deal', 'free_shipping', 'bundle') NOT NULL,
-    discount_value DECIMAL(10, 2),
-    discount_type ENUM('percentage', 'fixed') DEFAULT 'percentage',
-    coupon_code VARCHAR(100),
-    terms_conditions TEXT,
-    product_id UUID REFERENCES products(id),
-    category_id UUID REFERENCES categories(id),
-    image_url TEXT,
-    landing_page_url TEXT NOT NULL,
-    pricing_tier ENUM('basic', 'pro', 'enterprise') NOT NULL,
-    tier_price DECIMAL(12, 2),
-    location_targeting JSONB,
-    start_date DATE,
-    end_date DATE,
-    status ENUM('draft', 'pending_approval', 'active', 'expired', 'paused', 'rejected') DEFAULT 'draft',
-    click_count INTEGER DEFAULT 0,
-    redemption_count INTEGER DEFAULT 0,
-    view_count INTEGER DEFAULT 0,
-    submitted_by UUID REFERENCES users(id),
-    approved_by UUID REFERENCES users(id),
-    approved_at TIMESTAMP,
-    rejection_reason TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_offers_business_user_id ON offers(business_user_id);
-CREATE INDEX idx_offers_slug ON offers(slug);
-CREATE INDEX idx_offers_status ON offers(status);
-CREATE INDEX idx_offers_start_date ON offers(start_date);
-CREATE INDEX idx_offers_end_date ON offers(end_date);
-CREATE INDEX idx_offers_product_id ON offers(product_id);
-```
-
-#### local_vendors
-```sql
-CREATE TABLE local_vendors (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    business_user_id UUID REFERENCES business_users(id) ON DELETE CASCADE,
-    vendor_name VARCHAR(300) NOT NULL,
-    description TEXT,
-    address TEXT NOT NULL,
-    city VARCHAR(100) NOT NULL,
-    state VARCHAR(100),
-    country VARCHAR(2) NOT NULL,
-    postal_code VARCHAR(20),
-    latitude DECIMAL(10, 8),
-    longitude DECIMAL(11, 8),
-    phone VARCHAR(20),
-    email VARCHAR(255),
-    website_url TEXT,
-    product_categories JSONB, -- Array of category IDs
-    pricing_model ENUM('cpc', 'cpl', 'flat_fee', 'subscription') NOT NULL,
-    cpc_rate DECIMAL(10, 2),
-    cpl_rate DECIMAL(10, 2),
-    flat_fee DECIMAL(12, 2),
-    subscription_plan VARCHAR(50),
-    premium_listing BOOLEAN DEFAULT FALSE,
-    logo_url TEXT,
-    images JSONB,
-    business_hours JSONB,
-    rating DECIMAL(3, 2) DEFAULT 0,
-    total_reviews INTEGER DEFAULT 0,
-    status ENUM('draft', 'pending_approval', 'active', 'paused', 'rejected') DEFAULT 'draft',
-    click_count INTEGER DEFAULT 0,
-    lead_count INTEGER DEFAULT 0,
-    approved_by UUID REFERENCES users(id),
-    approved_at TIMESTAMP,
-    rejection_reason TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_local_vendors_business_user_id ON local_vendors(business_user_id);
-CREATE INDEX idx_local_vendors_city ON local_vendors(city);
-CREATE INDEX idx_local_vendors_status ON local_vendors(status);
-CREATE INDEX idx_local_vendors_location ON local_vendors(latitude, longitude);
+```json
+{
+  "table": "offers",
+  "description": "Promotional offers and deals",
+  "columns": {
+    "id": {"type": "UUID", "primary": true},
+    "business_user_id": {"type": "UUID", "references": "users.id", "required": true},
+    "title": {"type": "VARCHAR(300)", "required": true},
+    "slug": {"type": "VARCHAR(350)", "unique": true},
+    "description": {"type": "TEXT"},
+    "offer_type": {
+      "type": "ENUM",
+      "values": ["discount", "cashback", "bundle", "freebie"],
+      "required": true
+    },
+    "offer_value": {
+      "type": "JSONB",
+      "structure": {
+        "type": "ENUM(percentage, flat)",
+        "amount": "DECIMAL(10,2)",
+        "currency": "VARCHAR(3)"
+      }
+    },
+    "offer_code": {"type": "VARCHAR(50)", "unique": true},
+    "terms": {"type": "TEXT"},
+    "images": {"type": "JSONB"},
+    "products": {
+      "type": "JSONB",
+      "description": "Array of product IDs"
+    },
+    "validity": {
+      "type": "JSONB",
+      "structure": {
+        "start_date": "DATE",
+        "end_date": "DATE"
+      },
+      "required": true
+    },
+    "redemption": {
+      "type": "JSONB",
+      "structure": {
+        "limit_total": "INTEGER",
+        "limit_per_user": "INTEGER",
+        "min_purchase": "DECIMAL(10,2)",
+        "count_total": "INTEGER",
+        "count_unique_users": "INTEGER"
+      }
+    },
+    "status": {
+      "type": "ENUM",
+      "values": ["draft", "pending_approval", "active", "expired", "rejected"],
+      "default": "draft"
+    },
+    "created_at": {"type": "TIMESTAMP", "default": "CURRENT_TIMESTAMP"},
+    "updated_at": {"type": "TIMESTAMP", "default": "CURRENT_TIMESTAMP"}
+  },
+  "indexes": [
+    {"columns": ["business_user_id"], "type": "btree"},
+    {"columns": ["slug"], "type": "btree"},
+    {"columns": ["offer_code"], "type": "btree"},
+    {"columns": ["status"], "type": "btree"}
+  ],
+  "relationships": {
+    "belongs_to": "users (business_user_id)",
+    "has_many": "offer_redemptions"
+  }
+}
 ```
 
 ---
 
-### 7. Affiliate & E-commerce Links
-
-#### affiliate_programs
-```sql
-CREATE TABLE affiliate_programs (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name VARCHAR(200) NOT NULL,
-    platform VARCHAR(100), -- Amazon, Flipkart, etc.
-    api_key TEXT,
-    api_secret TEXT,
-    commission_rate DECIMAL(5, 2),
-    cookie_duration INTEGER, -- Days
-    status ENUM('active', 'inactive') DEFAULT 'active',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_affiliate_programs_platform ON affiliate_programs(platform);
-```
-
-#### affiliate_links
-```sql
-CREATE TABLE affiliate_links (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    business_user_id UUID REFERENCES business_users(id),
-    affiliate_program_id UUID REFERENCES affiliate_programs(id),
-    product_id UUID REFERENCES products(id),
-    blog_post_id UUID REFERENCES blog_posts(id),
-    original_url TEXT NOT NULL,
-    affiliate_url TEXT NOT NULL,
-    tracking_code VARCHAR(200),
-    placement_type ENUM('blog', 'review', 'offer', 'product_page') NOT NULL,
-    click_count INTEGER DEFAULT 0,
-    conversion_count INTEGER DEFAULT 0,
-    revenue DECIMAL(12, 2) DEFAULT 0,
-    status ENUM('active', 'inactive') DEFAULT 'active',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_affiliate_links_product_id ON affiliate_links(product_id);
-CREATE INDEX idx_affiliate_links_blog_post_id ON affiliate_links(blog_post_id);
-CREATE INDEX idx_affiliate_links_business_user_id ON affiliate_links(business_user_id);
-```
-
----
-
-### 8. Blog Management
+### 6. Blog Management
 
 #### blog_posts
-```sql
-CREATE TABLE blog_posts (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    title VARCHAR(500) NOT NULL,
-    slug VARCHAR(600) UNIQUE NOT NULL,
-    excerpt TEXT,
-    content TEXT NOT NULL,
-    featured_image TEXT,
-    author_id UUID REFERENCES users(id),
-    category_id UUID REFERENCES categories(id),
-    tags JSONB, -- Array of tags
-    status ENUM('draft', 'pending_review', 'published', 'archived') DEFAULT 'draft',
-    seo_title VARCHAR(255),
-    meta_description TEXT,
-    meta_keywords TEXT,
-    structured_data JSONB,
-    readability_score INTEGER,
-    word_count INTEGER,
-    reading_time INTEGER, -- Minutes
-    view_count INTEGER DEFAULT 0,
-    like_count INTEGER DEFAULT 0,
-    comment_count INTEGER DEFAULT 0,
-    share_count INTEGER DEFAULT 0,
-    related_products JSONB, -- Array of product IDs
-    monetization_enabled BOOLEAN DEFAULT FALSE,
-    published_at TIMESTAMP,
-    scheduled_at TIMESTAMP,
-    reviewed_by UUID REFERENCES users(id),
-    reviewed_at TIMESTAMP,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    deleted_at TIMESTAMP
-);
-
-CREATE INDEX idx_blog_posts_slug ON blog_posts(slug);
-CREATE INDEX idx_blog_posts_author_id ON blog_posts(author_id);
-CREATE INDEX idx_blog_posts_category_id ON blog_posts(category_id);
-CREATE INDEX idx_blog_posts_status ON blog_posts(status);
-CREATE INDEX idx_blog_posts_published_at ON blog_posts(published_at DESC);
-```
-
-#### blog_comments
-```sql
-CREATE TABLE blog_comments (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    blog_post_id UUID REFERENCES blog_posts(id) ON DELETE CASCADE,
-    user_id UUID REFERENCES users(id),
-    parent_comment_id UUID REFERENCES blog_comments(id),
-    content TEXT NOT NULL,
-    status ENUM('pending', 'approved', 'spam', 'deleted') DEFAULT 'pending',
-    like_count INTEGER DEFAULT 0,
-    moderated_by UUID REFERENCES users(id),
-    moderated_at TIMESTAMP,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_blog_comments_blog_post_id ON blog_comments(blog_post_id);
-CREATE INDEX idx_blog_comments_user_id ON blog_comments(user_id);
-CREATE INDEX idx_blog_comments_status ON blog_comments(status);
+```json
+{
+  "table": "blog_posts",
+  "description": "Blog content management",
+  "columns": {
+    "id": {"type": "UUID", "primary": true},
+    "author_id": {"type": "UUID", "references": "users.id", "required": true},
+    "title": {"type": "VARCHAR(300)", "required": true},
+    "slug": {"type": "VARCHAR(350)", "unique": true, "required": true},
+    "excerpt": {"type": "VARCHAR(500)"},
+    "content": {"type": "TEXT", "required": true},
+    "featured_image": {"type": "TEXT"},
+    "category": {"type": "VARCHAR(100)"},
+    "tags": {"type": "JSONB"},
+    "status": {
+      "type": "ENUM",
+      "values": ["draft", "pending", "published", "archived"],
+      "default": "draft"
+    },
+    "seo_metadata": {"type": "JSONB"},
+    "reading_time": {"type": "INTEGER"},
+    "view_count": {"type": "INTEGER", "default": 0},
+    "featured": {"type": "BOOLEAN", "default": false},
+    "created_at": {"type": "TIMESTAMP", "default": "CURRENT_TIMESTAMP"},
+    "updated_at": {"type": "TIMESTAMP", "default": "CURRENT_TIMESTAMP"},
+    "published_at": {"type": "TIMESTAMP"}
+  },
+  "indexes": [
+    {"columns": ["author_id"], "type": "btree"},
+    {"columns": ["slug"], "type": "btree"},
+    {"columns": ["status", "published_at"], "type": "btree"},
+    {"columns": ["category"], "type": "btree"}
+  ],
+  "relationships": {
+    "belongs_to": "users (author_id)",
+    "has_many": ["comments", "translations"]
+  }
+}
 ```
 
 ---
 
-### 9. Customer Support
-
-#### support_tickets
-```sql
-CREATE TABLE support_tickets (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    ticket_number VARCHAR(50) UNIQUE NOT NULL,
-    user_id UUID REFERENCES users(id),
-    user_role VARCHAR(50), -- Role of the user creating ticket
-    subject VARCHAR(500) NOT NULL,
-    description TEXT NOT NULL,
-    category VARCHAR(100), -- billing, technical, content, etc.
-    priority ENUM('low', 'medium', 'high', 'urgent') DEFAULT 'medium',
-    status ENUM('open', 'in_progress', 'waiting_on_customer', 'resolved', 'closed') DEFAULT 'open',
-    assigned_to UUID REFERENCES users(id),
-    assigned_team VARCHAR(50), -- support, ict, finance, etc.
-    attachments JSONB,
-    related_entity_type VARCHAR(50), -- campaign, offer, vendor, etc.
-    related_entity_id UUID,
-    sla_due_at TIMESTAMP,
-    first_response_at TIMESTAMP,
-    resolved_at TIMESTAMP,
-    closed_at TIMESTAMP,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_support_tickets_ticket_number ON support_tickets(ticket_number);
-CREATE INDEX idx_support_tickets_user_id ON support_tickets(user_id);
-CREATE INDEX idx_support_tickets_status ON support_tickets(status);
-CREATE INDEX idx_support_tickets_assigned_to ON support_tickets(assigned_to);
-CREATE INDEX idx_support_tickets_created_at ON support_tickets(created_at DESC);
-```
-
-#### support_ticket_messages
-```sql
-CREATE TABLE support_ticket_messages (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    ticket_id UUID REFERENCES support_tickets(id) ON DELETE CASCADE,
-    sender_id UUID REFERENCES users(id),
-    message TEXT NOT NULL,
-    attachments JSONB,
-    is_internal BOOLEAN DEFAULT FALSE, -- Internal notes
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_support_ticket_messages_ticket_id ON support_ticket_messages(ticket_id);
-CREATE INDEX idx_support_ticket_messages_created_at ON support_ticket_messages(created_at);
-```
-
----
-
-### 10. Financial Management
+### 7. Financial Management
 
 #### invoices
-```sql
-CREATE TABLE invoices (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    invoice_number VARCHAR(50) UNIQUE NOT NULL,
-    business_user_id UUID REFERENCES business_users(id),
-    billing_entity ENUM('ad_campaign', 'subscription', 'offer', 'vendor_listing') NOT NULL,
-    entity_id UUID NOT NULL,
-    subtotal DECIMAL(12, 2) NOT NULL,
-    tax DECIMAL(12, 2) DEFAULT 0,
-    discount DECIMAL(12, 2) DEFAULT 0,
-    total DECIMAL(12, 2) NOT NULL,
-    currency VARCHAR(3) DEFAULT 'INR',
-    billing_period_start DATE,
-    billing_period_end DATE,
-    due_date DATE,
-    status ENUM('draft', 'sent', 'paid', 'overdue', 'cancelled') DEFAULT 'draft',
-    payment_terms TEXT,
-    notes TEXT,
-    line_items JSONB,
-    issued_at TIMESTAMP,
-    paid_at TIMESTAMP,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_invoices_invoice_number ON invoices(invoice_number);
-CREATE INDEX idx_invoices_business_user_id ON invoices(business_user_id);
-CREATE INDEX idx_invoices_status ON invoices(status);
-CREATE INDEX idx_invoices_due_date ON invoices(due_date);
+```json
+{
+  "table": "invoices",
+  "description": "Billing invoices for business users",
+  "columns": {
+    "id": {"type": "UUID", "primary": true},
+    "invoice_number": {"type": "VARCHAR(50)", "unique": true, "required": true},
+    "business_user_id": {"type": "UUID", "references": "users.id", "required": true},
+    "invoice_type": {
+      "type": "ENUM",
+      "values": ["campaign", "subscription", "vendor_listing", "other"],
+      "required": true
+    },
+    "line_items": {
+      "type": "JSONB",
+      "description": "Array of invoice line items",
+      "structure": {
+        "description": "VARCHAR(500)",
+        "quantity": "INTEGER",
+        "unit_price": "DECIMAL(10,2)",
+        "amount": "DECIMAL(10,2)"
+      }
+    },
+    "subtotal": {"type": "DECIMAL(12,2)", "required": true},
+    "tax": {
+      "type": "JSONB",
+      "structure": {
+        "rate": "DECIMAL(5,2)",
+        "amount": "DECIMAL(12,2)"
+      }
+    },
+    "total": {"type": "DECIMAL(12,2)", "required": true},
+    "currency": {"type": "VARCHAR(3)", "default": "INR"},
+    "status": {
+      "type": "ENUM",
+      "values": ["draft", "sent", "paid", "overdue", "cancelled"],
+      "default": "draft"
+    },
+    "due_date": {"type": "DATE"},
+    "paid_at": {"type": "TIMESTAMP"},
+    "created_at": {"type": "TIMESTAMP", "default": "CURRENT_TIMESTAMP"},
+    "updated_at": {"type": "TIMESTAMP", "default": "CURRENT_TIMESTAMP"}
+  },
+  "indexes": [
+    {"columns": ["invoice_number"], "type": "btree"},
+    {"columns": ["business_user_id"], "type": "btree"},
+    {"columns": ["status"], "type": "btree"},
+    {"columns": ["due_date"], "type": "btree"}
+  ],
+  "relationships": {
+    "belongs_to": "users (business_user_id)",
+    "has_many": "payments"
+  }
+}
 ```
 
 #### payments
-```sql
-CREATE TABLE payments (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    invoice_id UUID REFERENCES invoices(id),
-    business_user_id UUID REFERENCES business_users(id),
-    payment_method ENUM('credit_card', 'debit_card', 'upi', 'bank_transfer', 'wallet') NOT NULL,
-    payment_gateway VARCHAR(100),
-    transaction_id VARCHAR(255),
-    amount DECIMAL(12, 2) NOT NULL,
-    currency VARCHAR(3) DEFAULT 'INR',
-    status ENUM('pending', 'processing', 'completed', 'failed', 'refunded') DEFAULT 'pending',
-    gateway_response JSONB,
-    notes TEXT,
-    processed_at TIMESTAMP,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_payments_invoice_id ON payments(invoice_id);
-CREATE INDEX idx_payments_business_user_id ON payments(business_user_id);
-CREATE INDEX idx_payments_status ON payments(status);
-CREATE INDEX idx_payments_transaction_id ON payments(transaction_id);
-```
-
-#### revenue_analytics
-```sql
-CREATE TABLE revenue_analytics (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    date DATE NOT NULL,
-    revenue_stream ENUM('ads', 'offers', 'vendors', 'affiliates', 'subscriptions', 'sponsored_content') NOT NULL,
-    revenue DECIMAL(12, 2) DEFAULT 0,
-    transactions INTEGER DEFAULT 0,
-    currency VARCHAR(3) DEFAULT 'INR',
-    country VARCHAR(2),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(date, revenue_stream, country)
-);
-
-CREATE INDEX idx_revenue_analytics_date ON revenue_analytics(date DESC);
-CREATE INDEX idx_revenue_analytics_revenue_stream ON revenue_analytics(revenue_stream);
+```json
+{
+  "table": "payments",
+  "description": "Payment transactions",
+  "columns": {
+    "id": {"type": "UUID", "primary": true},
+    "invoice_id": {"type": "UUID", "references": "invoices.id"},
+    "user_id": {"type": "UUID", "references": "users.id", "required": true},
+    "payment_method": {
+      "type": "ENUM",
+      "values": ["card", "bank_transfer", "upi", "wallet", "other"],
+      "required": true
+    },
+    "amount": {"type": "DECIMAL(12,2)", "required": true},
+    "currency": {"type": "VARCHAR(3)", "default": "INR"},
+    "status": {
+      "type": "ENUM",
+      "values": ["pending", "processing", "completed", "failed", "refunded"],
+      "default": "pending"
+    },
+    "transaction_id": {"type": "VARCHAR(200)"},
+    "gateway": {"type": "VARCHAR(100)"},
+    "gateway_response": {"type": "JSONB"},
+    "payment_metadata": {"type": "JSONB"},
+    "paid_at": {"type": "TIMESTAMP"},
+    "created_at": {"type": "TIMESTAMP", "default": "CURRENT_TIMESTAMP"}
+  },
+  "indexes": [
+    {"columns": ["invoice_id"], "type": "btree"},
+    {"columns": ["user_id"], "type": "btree"},
+    {"columns": ["transaction_id"], "type": "btree"},
+    {"columns": ["status"], "type": "btree"}
+  ],
+  "relationships": {
+    "belongs_to": ["invoices", "users"]
+  }
+}
 ```
 
 ---
 
-### 11. ERP Integration
+### 8. Support System
 
-#### erp_configurations
-```sql
-CREATE TABLE erp_configurations (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    business_user_id UUID REFERENCES business_users(id),
-    erp_system VARCHAR(100) NOT NULL, -- Odoo, ERPNext, Zoho, SAP
-    api_endpoint TEXT NOT NULL,
-    auth_type ENUM('oauth2', 'api_key', 'basic') NOT NULL,
-    credentials JSONB, -- Encrypted
-    entity_mappings JSONB, -- Field mappings
-    sync_enabled BOOLEAN DEFAULT TRUE,
-    sync_frequency VARCHAR(50), -- hourly, daily, etc.
-    last_sync_at TIMESTAMP,
-    status ENUM('active', 'inactive', 'error') DEFAULT 'active',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_erp_configurations_business_user_id ON erp_configurations(business_user_id);
-```
-
-#### erp_sync_logs
-```sql
-CREATE TABLE erp_sync_logs (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    erp_configuration_id UUID REFERENCES erp_configurations(id),
-    sync_type VARCHAR(100), -- offers, invoices, leads, etc.
-    records_processed INTEGER DEFAULT 0,
-    records_success INTEGER DEFAULT 0,
-    records_failed INTEGER DEFAULT 0,
-    error_details JSONB,
-    started_at TIMESTAMP,
-    completed_at TIMESTAMP,
-    status ENUM('running', 'completed', 'failed') DEFAULT 'running',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_erp_sync_logs_erp_configuration_id ON erp_sync_logs(erp_configuration_id);
-CREATE INDEX idx_erp_sync_logs_started_at ON erp_sync_logs(started_at DESC);
+#### support_tickets
+```json
+{
+  "table": "support_tickets",
+  "description": "Customer support tickets",
+  "columns": {
+    "id": {"type": "UUID", "primary": true},
+    "ticket_number": {"type": "VARCHAR(50)", "unique": true, "required": true},
+    "user_id": {"type": "UUID", "references": "users.id"},
+    "subject": {"type": "VARCHAR(300)", "required": true},
+    "description": {"type": "TEXT", "required": true},
+    "category": {
+      "type": "ENUM",
+      "values": ["technical", "billing", "content", "account", "other"],
+      "required": true
+    },
+    "priority": {
+      "type": "ENUM",
+      "values": ["low", "medium", "high", "urgent"],
+      "default": "medium"
+    },
+    "status": {
+      "type": "ENUM",
+      "values": ["open", "in_progress", "waiting_user", "resolved", "closed"],
+      "default": "open"
+    },
+    "assigned_to": {"type": "UUID", "references": "users.id"},
+    "attachments": {"type": "JSONB"},
+    "created_at": {"type": "TIMESTAMP", "default": "CURRENT_TIMESTAMP"},
+    "updated_at": {"type": "TIMESTAMP", "default": "CURRENT_TIMESTAMP"},
+    "resolved_at": {"type": "TIMESTAMP"}
+  },
+  "indexes": [
+    {"columns": ["ticket_number"], "type": "btree"},
+    {"columns": ["user_id"], "type": "btree"},
+    {"columns": ["status"], "type": "btree"},
+    {"columns": ["assigned_to"], "type": "btree"}
+  ],
+  "relationships": {
+    "belongs_to": ["users (user_id)", "users (assigned_to)"],
+    "has_many": "support_messages"
+  }
+}
 ```
 
 ---
 
-### 12. Multilingual Support
+### 9. Translation System
 
 #### translations
-```sql
-CREATE TABLE translations (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    entity_type VARCHAR(100) NOT NULL, -- product, blog_post, category, etc.
-    entity_id UUID NOT NULL,
-    field_name VARCHAR(100) NOT NULL, -- title, description, content, etc.
-    language VARCHAR(10) NOT NULL,
-    translated_value TEXT NOT NULL,
-    translation_method ENUM('manual', 'ai', 'professional') DEFAULT 'manual',
-    translated_by UUID REFERENCES users(id),
-    quality_score INTEGER,
-    status ENUM('draft', 'published') DEFAULT 'published',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(entity_type, entity_id, field_name, language)
-);
-
-CREATE INDEX idx_translations_entity ON translations(entity_type, entity_id);
-CREATE INDEX idx_translations_language ON translations(language);
-```
-
-#### supported_languages
-```sql
-CREATE TABLE supported_languages (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    code VARCHAR(10) UNIQUE NOT NULL, -- en, hi, es, etc.
-    name VARCHAR(100) NOT NULL,
-    native_name VARCHAR(100) NOT NULL,
-    is_rtl BOOLEAN DEFAULT FALSE,
-    is_default BOOLEAN DEFAULT FALSE,
-    is_active BOOLEAN DEFAULT TRUE,
-    display_order INTEGER DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_supported_languages_code ON supported_languages(code);
-CREATE INDEX idx_supported_languages_is_active ON supported_languages(is_active);
-```
-
----
-
-### 13. Analytics & Tracking
-
-#### page_views
-```sql
-CREATE TABLE page_views (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES users(id),
-    session_id UUID,
-    page_type VARCHAR(50), -- home, product, blog, offer, etc.
-    page_id UUID,
-    page_url TEXT,
-    referrer TEXT,
-    device_type VARCHAR(50),
-    browser VARCHAR(100),
-    os VARCHAR(100),
-    ip_address INET,
-    location_country VARCHAR(2),
-    location_city VARCHAR(100),
-    time_on_page INTEGER, -- Seconds
-    scroll_depth INTEGER, -- Percentage
-    viewed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_page_views_user_id ON page_views(user_id);
-CREATE INDEX idx_page_views_page_type ON page_views(page_type, page_id);
-CREATE INDEX idx_page_views_viewed_at ON page_views(viewed_at DESC);
-```
-
-#### user_actions
-```sql
-CREATE TABLE user_actions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES users(id),
-    session_id UUID,
-    action_type VARCHAR(100), -- click, like, share, save, comment, etc.
-    entity_type VARCHAR(50),
-    entity_id UUID,
-    metadata JSONB,
-    ip_address INET,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_user_actions_user_id ON user_actions(user_id);
-CREATE INDEX idx_user_actions_action_type ON user_actions(action_type);
-CREATE INDEX idx_user_actions_entity ON user_actions(entity_type, entity_id);
-CREATE INDEX idx_user_actions_created_at ON user_actions(created_at DESC);
-```
-
----
-
-### 14. System Configuration
-
-#### system_settings
-```sql
-CREATE TABLE system_settings (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    setting_key VARCHAR(200) UNIQUE NOT NULL,
-    setting_value TEXT,
-    setting_type VARCHAR(50), -- string, number, boolean, json
-    category VARCHAR(100),
-    description TEXT,
-    is_public BOOLEAN DEFAULT FALSE,
-    updated_by UUID REFERENCES users(id),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_system_settings_setting_key ON system_settings(setting_key);
-CREATE INDEX idx_system_settings_category ON system_settings(category);
-```
-
-#### audit_logs
-```sql
-CREATE TABLE audit_logs (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES users(id),
-    action VARCHAR(100) NOT NULL, -- create, update, delete, login, etc.
-    entity_type VARCHAR(100),
-    entity_id UUID,
-    old_values JSONB,
-    new_values JSONB,
-    ip_address INET,
-    user_agent TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_audit_logs_user_id ON audit_logs(user_id);
-CREATE INDEX idx_audit_logs_action ON audit_logs(action);
-CREATE INDEX idx_audit_logs_entity ON audit_logs(entity_type, entity_id);
-CREATE INDEX idx_audit_logs_created_at ON audit_logs(created_at DESC);
-```
-
----
-
-## MongoDB Collections
-
-### 1. review_content
-```javascript
+```json
 {
-    _id: ObjectId,
-    review_id: UUID, // References PostgreSQL reviews.id
-    full_content: String, // Large text content
-    transcript: String, // For video/audio reviews
-    parsed_content: Object, // Structured content
-    metadata: {
-        duration: Number,
-        file_size: Number,
-        format: String
+  "table": "translations",
+  "description": "Multilingual content translations (Indian languages focus)",
+  "columns": {
+    "id": {"type": "UUID", "primary": true},
+    "entity_type": {
+      "type": "ENUM",
+      "values": ["product", "category", "blog", "offer", "ui_string"],
+      "required": true
     },
-    created_at: Date,
-    updated_at: Date
-}
-```
-
-### 2. analytics_events
-```javascript
-{
-    _id: ObjectId,
-    event_type: String,
-    user_id: UUID,
-    session_id: UUID,
-    timestamp: Date,
-    properties: Object, // Flexible event properties
-    device: {
-        type: String,
-        os: String,
-        browser: String
+    "entity_id": {"type": "UUID", "required": true},
+    "field_name": {"type": "VARCHAR(100)", "required": true},
+    "language": {
+      "type": "VARCHAR(10)",
+      "required": true,
+      "description": "hi, bn, te, ta, mr, gu, kn, ml, etc."
     },
-    location: {
-        country: String,
-        city: String,
-        lat: Number,
-        lng: Number
-    }
-}
-```
-
-### 3. search_queries
-```javascript
-{
-    _id: ObjectId,
-    user_id: UUID,
-    query: String,
-    filters: Object,
-    results_count: Number,
-    clicked_result_id: UUID,
-    click_position: Number,
-    timestamp: Date,
-    response_time: Number
-}
-```
-
-### 4. user_behavior_profiles
-```javascript
-{
-    _id: ObjectId,
-    user_id: UUID,
-    browsing_history: [{
-        page_type: String,
-        page_id: UUID,
-        timestamp: Date
-    }],
-    interests: [String],
-    purchase_intent: Object,
-    engagement_score: Number,
-    last_updated: Date
+    "translation": {"type": "TEXT", "required": true},
+    "translation_method": {
+      "type": "ENUM",
+      "values": ["manual", "ai", "community"],
+      "default": "manual"
+    },
+    "quality_score": {"type": "DECIMAL(3,2)"},
+    "translator_id": {"type": "UUID", "references": "users.id"},
+    "created_at": {"type": "TIMESTAMP", "default": "CURRENT_TIMESTAMP"},
+    "updated_at": {"type": "TIMESTAMP", "default": "CURRENT_TIMESTAMP"}
+  },
+  "indexes": [
+    {"columns": ["entity_type", "entity_id", "language", "field_name"], "type": "btree", "unique": true},
+    {"columns": ["language"], "type": "btree"}
+  ],
+  "relationships": {
+    "belongs_to": "users (translator_id)"
+  }
 }
 ```
 
 ---
 
-## Redis Cache Structure
+## Key Features
 
-### 1. Session Cache
-```
-Key: session:{session_id}
-Value: JSON (user_id, role, expires_at, etc.)
-TTL: 1 day
+### JSONB Flexibility
+All schema definitions use JSONB fields for:
+- Flexible metadata storage
+- Complex nested data structures
+- Easy schema evolution
+- Efficient querying with GIN indexes
+
+### Relationship Types
+- **belongs_to:** Foreign key relationship (many-to-one)
+- **has_many:** Reverse foreign key relationship (one-to-many)
+- **has_one:** One-to-one relationship
+
+### Index Strategy
+- **btree:** Standard B-tree indexes for equality and range queries
+- **gin:** Generalized Inverted Index for JSONB and full-text search
+- **brin:** Block Range Index for time-series data (impressions, clicks)
+- **gin_trgm_ops:** Trigram indexes for fuzzy text search
+
+---
+
+## Dashboard-Specific Queries
+
+### Super Admin Dashboard
+
+```sql
+-- User Statistics
+SELECT 
+  role,
+  status,
+  COUNT(*) as user_count
+FROM users
+GROUP BY role, status;
+
+-- Revenue Metrics
+SELECT 
+  DATE(created_at) as date,
+  SUM(total) as daily_revenue
+FROM invoices
+WHERE status = 'paid'
+GROUP BY DATE(created_at)
+ORDER BY date DESC;
+
+-- Campaign Performance
+SELECT 
+  status,
+  COUNT(*) as campaign_count,
+  SUM((stats->>'impressions')::int) as total_impressions,
+  SUM((stats->>'clicks')::int) as total_clicks,
+  SUM((stats->>'spent')::decimal) as total_spent
+FROM ad_campaigns
+GROUP BY status;
 ```
 
-### 2. Product Cache
-```
-Key: product:{product_id}
-Value: JSON (product details)
-TTL: 1 hour
+### Business User Dashboard
+
+```sql
+-- My Campaign Stats
+SELECT 
+  id,
+  name,
+  status,
+  (stats->>'impressions')::int as impressions,
+  (stats->>'clicks')::int as clicks,
+  (stats->>'spent')::decimal as spent,
+  (budget->>'total')::decimal as budget
+FROM ad_campaigns
+WHERE business_user_id = :user_id
+ORDER BY created_at DESC;
+
+-- Campaign Performance Over Time
+SELECT 
+  DATE(impression_time) as date,
+  COUNT(*) as impressions,
+  COUNT(DISTINCT session_id) as unique_views
+FROM ad_impressions
+WHERE campaign_id = :campaign_id
+GROUP BY DATE(impression_time)
+ORDER BY date;
 ```
 
-### 3. Ad Serving Cache
-```
-Key: ads:{location}:{targeting_hash}
-Value: JSON (eligible campaigns)
-TTL: 5 minutes
-```
+### Content Admin Dashboard
 
-### 4. Rate Limiting
-```
-Key: ratelimit:{user_id}:{endpoint}
-Value: Counter
-TTL: 1 hour
+```sql
+-- Product Status Summary
+SELECT 
+  status,
+  COUNT(*) as product_count
+FROM products
+GROUP BY status;
+
+-- Review Queue
+SELECT 
+  r.id,
+  r.product_id,
+  p.name as product_name,
+  r.reviewer_name,
+  r.rating->>'overall' as rating,
+  r.created_at
+FROM reviews r
+JOIN products p ON r.product_id = p.id
+WHERE r.status = 'pending'
+ORDER BY r.created_at ASC;
 ```
 
 ---
 
-## Elasticsearch Indices
+## Performance Considerations
 
-### 1. products_index
-```json
-{
-    "mappings": {
-        "properties": {
-            "id": {"type": "keyword"},
-            "name": {"type": "text", "analyzer": "standard"},
-            "description": {"type": "text"},
-            "brand": {"type": "keyword"},
-            "category": {"type": "keyword"},
-            "rating": {"type": "float"},
-            "price_range": {"type": "nested"},
-            "created_at": {"type": "date"}
-        }
-    }
-}
+### Partitioning Strategy
+```sql
+-- Partition ad_impressions by month for better performance
+CREATE TABLE ad_impressions_2024_11 PARTITION OF ad_impressions
+FOR VALUES FROM ('2024-11-01') TO ('2024-12-01');
+
+-- Partition ad_clicks similarly
+CREATE TABLE ad_clicks_2024_11 PARTITION OF ad_clicks
+FOR VALUES FROM ('2024-11-01') TO ('2024-12-01');
 ```
 
-### 2. blog_posts_index
-```json
-{
-    "mappings": {
-        "properties": {
-            "id": {"type": "keyword"},
-            "title": {"type": "text", "analyzer": "standard"},
-            "content": {"type": "text"},
-            "author": {"type": "keyword"},
-            "tags": {"type": "keyword"},
-            "published_at": {"type": "date"}
-        }
-    }
-}
-```
+### Materialized Views for Analytics
+```sql
+-- Daily campaign analytics
+CREATE MATERIALIZED VIEW campaign_daily_stats AS
+SELECT 
+  campaign_id,
+  DATE(impression_time) as date,
+  COUNT(*) as impressions,
+  COUNT(DISTINCT user_id) as unique_users,
+  AVG(view_duration) as avg_view_duration
+FROM ad_impressions
+GROUP BY campaign_id, DATE(impression_time);
 
-### 3. reviews_index
-```json
-{
-    "mappings": {
-        "properties": {
-            "id": {"type": "keyword"},
-            "product_id": {"type": "keyword"},
-            "content": {"type": "text"},
-            "sentiment": {"type": "keyword"},
-            "rating": {"type": "float"},
-            "created_at": {"type": "date"}
-        }
-    }
-}
+-- Refresh strategy: Once per hour
+CREATE INDEX ON campaign_daily_stats (campaign_id, date);
 ```
 
 ---
 
-## Database Relationships Summary
+## Backup & Maintenance
 
-1. **Users** → Multiple dashboards/roles
-2. **Business Users** → Campaigns, Offers, Vendors, Invoices
-3. **Products** → Reviews, Offers, Vendors, Blog Posts
-4. **Reviews** → Products, Influencers, Analysis
-5. **Campaigns** → Creatives, Impressions, Clicks, Analytics
-6. **Blog Posts** → Authors, Categories, Comments, Affiliates
-7. **Support Tickets** → Users, Messages, Assignments
-8. **Invoices** → Business Users, Payments, Entities
+### Backup Strategy
+- **Full backup:** Daily at 2 AM
+- **Incremental backup:** Every 6 hours
+- **WAL archiving:** Continuous
+- **Retention:** 30 days
 
----
-
-## Data Retention Policies
-
-- **Audit Logs**: 2 years
-- **Analytics Events**: 1 year (MongoDB), 90 days (Hot Storage)
-- **Ad Impressions**: 90 days detailed, 2 years aggregated
-- **Page Views**: 30 days detailed, 1 year aggregated
-- **User Sessions**: 30 days
-- **Cache**: 1 hour to 1 day depending on data type
+### Maintenance Tasks
+- **Vacuum:** Weekly on large tables
+- **Analyze:** Daily during off-peak hours
+- **Index rebuild:** Monthly for heavily updated tables
+- **Partition management:** Automated monthly rotation
 
 ---
 
-## Security Considerations
-
-1. **Encryption**: All sensitive data (passwords, API keys, payment info) encrypted at rest
-2. **Access Control**: Row-level security for multi-tenant data
-3. **PII Protection**: GDPR/DPDP compliant data handling
-4. **Audit Trail**: All critical operations logged
-5. **Data Anonymization**: User data anonymized in analytics after 90 days
-
----
-
-## Backup Strategy
-
-- **PostgreSQL**: Daily full backups, hourly incremental
-- **MongoDB**: Daily snapshots
-- **Redis**: Persistence enabled, daily RDB snapshots
-- **Retention**: 30 days rolling backups
-
----
-
-This database schema provides a comprehensive foundation for the OpinionFlow platform, supporting all functional requirements while maintaining scalability, security, and performance.
+**Document Version:** 2.0  
+**Last Updated:** November 10, 2024  
+**Status:** Complete - Ready for Implementation
+**Focus:** Dashboard Requirements & Indian Language Support
