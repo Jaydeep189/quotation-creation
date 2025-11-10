@@ -763,7 +763,7 @@ This document defines the relational database schema for OpinionFlow, optimized 
 ```json
 {
   "table": "translations",
-  "description": "Multilingual content translations (Indian languages focus)",
+  "description": "API-based multilingual content translations (Sarvam.ai for Indian languages)",
   "columns": {
     "id": {"type": "UUID", "primary": true},
     "entity_type": {
@@ -781,20 +781,42 @@ This document defines the relational database schema for OpinionFlow, optimized 
     "translation": {"type": "TEXT", "required": true},
     "translation_method": {
       "type": "ENUM",
-      "values": ["manual", "ai", "community"],
-      "default": "manual"
+      "values": ["api_cached", "manual_override"],
+      "default": "api_cached",
+      "description": "api_cached: Cached translation from Sarvam.ai API, manual_override: Human-reviewed translation"
     },
-    "quality_score": {"type": "DECIMAL(3,2)"},
-    "translator_id": {"type": "UUID", "references": "users.id"},
+    "source_text_hash": {
+      "type": "VARCHAR(64)",
+      "description": "SHA-256 hash of source text for cache invalidation"
+    },
+    "api_metadata": {
+      "type": "JSONB",
+      "structure": {
+        "provider": "VARCHAR(50)",
+        "api_version": "VARCHAR(20)",
+        "translated_at": "TIMESTAMP",
+        "confidence_score": "DECIMAL(3,2)",
+        "request_id": "VARCHAR(100)"
+      },
+      "description": "Metadata from Sarvam.ai API response"
+    },
+    "quality_verified": {
+      "type": "BOOLEAN",
+      "default": false,
+      "description": "Manual quality verification flag"
+    },
+    "verified_by": {"type": "UUID", "references": "users.id"},
     "created_at": {"type": "TIMESTAMP", "default": "CURRENT_TIMESTAMP"},
     "updated_at": {"type": "TIMESTAMP", "default": "CURRENT_TIMESTAMP"}
   },
   "indexes": [
     {"columns": ["entity_type", "entity_id", "language", "field_name"], "type": "btree", "unique": true},
-    {"columns": ["language"], "type": "btree"}
+    {"columns": ["language"], "type": "btree"},
+    {"columns": ["source_text_hash"], "type": "btree"},
+    {"columns": ["translation_method"], "type": "btree"}
   ],
   "relationships": {
-    "belongs_to": "users (translator_id)"
+    "belongs_to": "users (verified_by)"
   }
 }
 ```
