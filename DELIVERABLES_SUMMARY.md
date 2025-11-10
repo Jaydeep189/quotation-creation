@@ -122,9 +122,9 @@ This repository contains **streamlined technical documentation** for the Opinion
 - **Ad Engine**: Custom advertising system with basic targeting
 - **Database**: PostgreSQL with JSON-based schema
 - **Multilingual**: Focus on **Indian languages** (Hindi, Bengali, Telugu, Tamil, etc.)
-  - Community-driven translation approach
-  - Manual professional translation
-  - Similar to sanskritdocuments.org methodology
+  - **Sarvam.ai API** for real-time translation
+  - Intelligent caching mechanism for performance
+  - Manual override capability for critical content
 
 ### Estimated Timeline
 - **Dashboard Development**: 6 weeks
@@ -152,11 +152,11 @@ This repository contains **streamlined technical documentation** for the Opinion
 
 ### 1. Indian Language Focus
 Unlike typical platforms using DeepL (European languages), OpinionFlow uses:
-- **Community-driven translation**: Native speakers contribute
-- **Professional manual translation**: For critical content
-- **Quality verification**: Moderation and review process
-- **Cultural context**: Proper localization, not just translation
-- Inspired by **sanskritdocuments.org** approach
+- **Sarvam.ai Translation API**: Specialized for Indian native languages
+- **Real-time API translation**: With intelligent caching for performance
+- **Superior accuracy**: Built specifically for Indian market vs. European-focused services
+- **Manual override capability**: Professional refinement for critical content
+- **Cultural context**: Proper localization with understanding of Indian linguistic nuances
 
 ### 2. Streamlined Ad Engine
 Practical, implementable design:
@@ -208,7 +208,7 @@ All documents are:
 - ✅ Streamlined and focused
 - ✅ Optimized for Indian market
 - ✅ Technology stack updated (SvelteKit, Golang, Astro)
-- ✅ Translation strategy revised (Indian languages, community-driven)
+- ✅ Translation strategy revised (Indian languages, Sarvam.ai API-based)
 - ✅ Practical and implementable
 - ✅ Ready for development
 
@@ -231,7 +231,7 @@ All documents are:
 1. Set up database schema (DATABASE_SCHEMA.md)
 2. Build core dashboards (DASHBOARD_SITEMAP.md)
 3. Implement ad engine (AD_ENGINE.md)
-4. Add translation support (DATABASE_SCHEMA.md translations table)
+4. Add translation support with Sarvam.ai API integration (DATABASE_SCHEMA.md translations table)
 5. Integrate and test
 
 ---
@@ -245,7 +245,7 @@ All documents are:
 
 ### 2. Market-Specific
 - Indian language focus (not European)
-- Community-driven translation approach
+- Sarvam.ai API-based translation approach
 - Cultural context consideration
 
 ### 3. Modern Technology
@@ -273,7 +273,7 @@ All documents are:
 2. Implement database schema
 3. Build core dashboards (start with one)
 4. Develop ad engine in parallel
-5. Add translation framework
+5. Add translation framework with Sarvam.ai API integration
 6. Test and iterate
 
 ### For Stakeholders
@@ -289,7 +289,7 @@ All documents are:
 This repository contains **focused, practical documentation** for OpinionFlow:
 
 - **3 core documents** (DASHBOARD_SITEMAP, DATABASE_SCHEMA, AD_ENGINE)
-- **Indian language focus** (community-driven translation)
+- **Indian language focus** (Sarvam.ai API-based translation)
 - **Modern tech stack** (SvelteKit, Golang, Astro)
 - **Action-oriented specs** (what users can do on each page)
 - **Realistic estimates** (10-12 weeks for core dashboards)

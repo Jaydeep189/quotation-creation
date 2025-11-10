@@ -95,34 +95,50 @@ The platform is designed with **Indian languages** as the primary translation ta
 
 ### Translation Approach
 
-Instead of using DeepL (which is optimized for European languages), the platform will use:
+The platform uses **Sarvam.ai Text Translation API** as the primary translation provider, offering superior translation quality for Indian languages compared to traditional services like DeepL (which is optimized for European languages).
 
-1. **Community-driven translation:**
-   - Native speakers contribute translations
-   - Quality verification by moderators
-   - Crowdsourced improvement model
+**Why Sarvam.ai?**
+- Specialized in Indian native languages with deep understanding of cultural context
+- Built specifically for the Indian market with better linguistic accuracy
+- Supports all major Indian languages with high-quality real-time translation
+- More suitable than European-focused translation services
 
-2. **Manual professional translation:**
-   - Professional translators for critical content
-   - Quality assurance process
-   - Cultural context consideration
+### Implementation Strategy
 
-3. **AI-assisted translation (future):**
-   - Specialized models for Indian languages
-   - Google Translation API for initial drafts
-   - Human review and refinement required
+1. **Primary Translation Provider: Sarvam.ai API**
+   - Real-time API-based translation using Sarvam.ai Text Translation API (https://www.sarvam.ai/text)
+   - Automatic translation of content (products, blogs, offers, UI strings)
+   - Intelligent caching mechanism to reduce API calls and improve performance
+   - Rate limiting and quota management for cost optimization
+
+2. **Translation Caching:**
+   - Translated content cached in database for instant retrieval
+   - Cache invalidation on source content updates
+   - Reduces API costs while maintaining freshness
+
+3. **Manual Override Capability:**
+   - Critical content can be manually reviewed and overridden
+   - Quality assurance process for important translations
+   - Professional translators can refine AI translations when needed
 
 ### Translation Architecture
 
-The database schema includes a dedicated `translations` table that maps:
+The database schema includes a dedicated `translations` table that supports:
 - Entity type (product, blog, offer, etc.)
 - Entity ID
 - Field name (title, description, etc.)
 - Target language
-- Translation method (manual, AI, community)
-- Quality score
+- Cached translation content
+- Translation method (api_cached, manual_override)
+- Source API metadata (provider, version, timestamp)
+- Quality verification flags
 
-This approach is similar to how **sanskritdocuments.org** handles multi-script Indian language content, emphasizing community contribution and manual curation for accuracy.
+**Technical Configuration:**
+- API key management for Sarvam.ai
+- Rate limiting and request throttling
+- Automatic retry logic with exponential backoff
+- Fallback to cached translations on API failures
+- Analytics for translation usage and costs
 
 ---
 
