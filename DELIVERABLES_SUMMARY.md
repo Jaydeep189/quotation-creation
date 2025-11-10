@@ -245,7 +245,7 @@ All documents are:
 
 ### 2. Market-Specific
 - Indian language focus (not European)
-- Community-driven translation approach
+- Sarvam.ai API-based translation approach
 - Cultural context consideration
 
 ### 3. Modern Technology
